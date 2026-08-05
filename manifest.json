@@ -1,9 +1,9 @@
 {
-  "version": "2026.08.05.01",
+  "version": "2026.08.05.02",
   "scripts": [
     {
       "name": "Notificacao-Teste.ps1",
-      "hash": "c92428147fa114c40325b82f6a5d9c6bc0e5216a08af973dafad00f0439f274d",
+      "hash": "ca30d9b5a56dec3dccabe29de36120cc8c628895a5e9acea71c6b352a0b8853b",
       "run": true
     }
   ]
