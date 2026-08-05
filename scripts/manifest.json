@@ -1,9 +1,12 @@
 {
-  "version": "2026.08.05.01",
+  "version": "2026.08.05.03",
   "scripts": [
     {
       "name": "Notificacao-Teste.ps1",
-      "hash": "c92428147fa114c40325b82f6a5d9c6bc0e5216a08af973dafad00f0439f274d",
+      "run": true
+    },
+    {
+      "name": "Notificacao-FirstNews.ps1",
       "run": true
     }
   ]
