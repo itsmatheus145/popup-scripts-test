@@ -1,13 +1,8 @@
 {
-  "version": "2026.08.05.03",
+  "version": "2026.08.05.04",
   "scripts": [
-    {
-      "name": "Notificacao-Teste.ps1",
-      "run": true
-    },
-    {
-      "name": "Notificacao-FirstNews.ps1",
-      "run": true
-    }
+    { "name": "Notificacao-Teste.ps1", "run": true },
+    { "name": "Notificacao-FirstNews.ps1", "run": true },
+    { "name": "Notificacao-Aniversario.ps1", "run": true }
   ]
 }
