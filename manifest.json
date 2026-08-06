@@ -1,8 +1,9 @@
 {
-  "version": "2026.08.06.02",
+  "version": "2026.08.06.03",
   "scripts": [
     { "name": "Notificacao-Teste.ps1", "run": true },
     { "name": "Notificacao-FirstNews.ps1", "run": true },
-    { "name": "Notificacao-Aniversario.ps1", "run": true }
+    { "name": "Notificacao-Aniversario.ps1", "run": true },
+    { "name": "Atualizar-Wallpaper.ps1", "run": true }
   ]
 }
