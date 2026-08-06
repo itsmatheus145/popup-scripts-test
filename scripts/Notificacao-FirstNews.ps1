@@ -27,7 +27,7 @@ Add-Type -AssemblyName System.Drawing
 # ====================== CONFIGURACAO ======================
 $Titulo         = "A nova edição do FirstNews já está no ar!"
 $TextoBotao     = "Clique aqui para conferir"
-$UrlAoClicar    = "https://firstdecisioncombr.sharepoint.com/"
+$UrlAoClicar    = "https://youtube.com"
 $TempoAutoFecha = 20  # segundos; 0 = não fecha sozinho
 $RaioBotao      = 18  # raio do arredondamento do botão, em pixels
 
