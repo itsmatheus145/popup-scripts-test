@@ -17,7 +17,7 @@
 $RepoOwner   = "itsmatheus145"
 $RepoName    = "popup-scripts-test"
 $Branch      = "main"
-$GitHubToken = "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"
+$GitHubToken = "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"
                      # ATENÇÃO: token de teste. Revogar após validação e mover
                      # para Windows Credential Manager antes de produção.
 
@@ -52,8 +52,33 @@ $SPI_SETDESKWALLPAPER = 0x0014
 $SPIF_UPDATEINIFILE   = 0x01
 $SPIF_SENDCHANGE      = 0x02
 
+$PolicyKeyPath = "HKCU:\Software\Policies\Microsoft\Windows\System"
+
 # --------------------------------------------------------
 Write-Log "===== Início da atualização de wallpaper ====="
+
+# Remove eventual chave de política antiga que force um wallpaper fixo
+# (ex: GPO "Desktop Wallpaper" ainda não desativada / não propagada).
+# Sem isso, o valor definido via SystemParametersInfo pode ser sobrescrito
+# no próximo ciclo de atualização de política.
+if (Test-Path $PolicyKeyPath) {
+    try {
+        $wp = Get-ItemProperty -Path $PolicyKeyPath -Name "Wallpaper" -ErrorAction SilentlyContinue
+        if ($wp) {
+            Remove-ItemProperty -Path $PolicyKeyPath -Name "Wallpaper" -ErrorAction Stop
+            Write-Log "Valor de política 'Wallpaper' (GPO antiga) removido de $PolicyKeyPath."
+        }
+        $ws = Get-ItemProperty -Path $PolicyKeyPath -Name "WallpaperStyle" -ErrorAction SilentlyContinue
+        if ($ws) {
+            Remove-ItemProperty -Path $PolicyKeyPath -Name "WallpaperStyle" -ErrorAction Stop
+            Write-Log "Valor de política 'WallpaperStyle' (GPO antiga) removido de $PolicyKeyPath."
+        }
+    } catch {
+        Write-Log "Não foi possível remover a chave de política antiga (sem permissão ou já removida pela GPO): $($_.Exception.Message)" "WARN"
+    }
+} else {
+    Write-Log "Nenhuma chave de política antiga encontrada em $PolicyKeyPath (esperado após a GPO ser desativada)."
+}
 
 if (-not (Test-Path $CacheDir)) {
     New-Item -Path $CacheDir -ItemType Directory -Force | Out-Null
