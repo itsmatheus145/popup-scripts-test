@@ -1,5 +1,5 @@
 {
-  "version": "2026.08.06.03",
+  "version": "2026.08.19.01",
   "scripts": [
     { "name": "Notificacao-Teste.ps1", "run": true },
     { "name": "Notificacao-FirstNews.ps1", "run": true },
