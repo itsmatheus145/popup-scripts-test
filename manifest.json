@@ -1,11 +1,11 @@
 {
-  "version": "2026.08.23.03",
+  "version": "2026.08.24.01",
   "schedules": [
     { "name": "logon", "type": "logon" },
-    { "name": "daily_0900", "type": "daily", "time": "09:00" }
+    { "name": "daily_1130", "type": "daily", "time": "11:30" }
   ],
   "scripts": [
     { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "logon" },
-    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_0900" }
+    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_1130" }
   ]
 }
