@@ -5,7 +5,7 @@
     { "name": "daily_1130", "type": "daily", "time": "11:30" }
   ],
   "assets": [
-    { "repoPath": "images/1. Fundo teams.png", "localName": "wallpaper.jpg" }
+    { "repoPath": "images/wallpaper.jpg", "localName": "wallpaper.jpg" }
   ],
   "scripts": [
     { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "logon" },
