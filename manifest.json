@@ -10,6 +10,6 @@
   "scripts": [
     { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "logon" },
     { "name": "Atualizar-Wallpaper.ps1", "run": true, "trigger": "logon" },
-    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_1130" }
+    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_1050" }
   ]
 }
