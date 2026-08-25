@@ -1,5 +1,5 @@
 {
-  "version": "2026.08.25.08",
+  "version": "2026.08.25.09",
   "schedules": [
     { "name": "logon", "type": "logon" },
     { "name": "daily_1130", "type": "daily", "time": "11:30" }
