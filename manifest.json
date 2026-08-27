@@ -1,15 +1,15 @@
 {
-  "version": "2026.08.27.06",
+  "version": "2026.08.27.07",
   "schedules": [
     { "name": "daily_1400", "type": "daily", "time": "14:00" },
-    { "name": "daily_1410", "type": "daily", "time": "14:10" }
+    { "name": "daily_1415", "type": "daily", "time": "14:15" }
   ],
   "assets": [
     { "repoPath": "images/setembro.jpg", "localName": "wallpaper.jpg" }
   ],
   "scripts": [
     { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "daily_1400" },
-    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_1410" },
+    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_1415" },
     { "name": "Atualizar-Wallpaper.ps1", "run": true }
   ]
 }
