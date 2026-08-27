@@ -1,37 +1,15 @@
 {
-  "version": "2026.08.27.01",
+  "version": "2026.08.27.02",
   "schedules": [
-    {
-      "name": "logon",
-      "type": "logon"
-    },
-    {
-      "name": "daily_1130",
-      "type": "daily",
-      "time": "11:30"
-    }
+    { "name": "logon", "type": "logon" },
+    { "name": "daily_1130", "type": "daily", "time": "10:20" }
   ],
   "assets": [
-    {
-      "repoPath": "images/setembro.jpg",
-      "localName": "wallpaper.jpg"
-    }
+    { "repoPath": "images/setembro.jpg", "localName": "wallpaper.jpg" }
   ],
   "scripts": [
-    {
-      "name": "Notificacao-FirstNews.ps1",
-      "run": true,
-      "trigger": "logon"
-    },
-    {
-      "name": "Atualizar-Wallpaper.ps1",
-      "run": true,
-      "trigger": "logon"
-    },
-    {
-      "name": "Notificacao-Aniversario.ps1",
-      "run": true,
-      "trigger": "daily_1130"
-    }
+    { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "logon" },
+    { "name": "Atualizar-Wallpaper.ps1", "run": true, "trigger": "logon" },
+    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_1130" }
   ]
 }
