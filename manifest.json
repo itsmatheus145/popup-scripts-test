@@ -1,5 +1,5 @@
 {
-  "version": "2026.08.27.12",
+  "version": "2026.08.27.13",
   "schedules": [
     { "name": "daily_1400", "type": "daily", "time": "14:00" },
     { "name": "daily_1600", "type": "daily", "time": "16:00" }
