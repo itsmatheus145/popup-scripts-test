@@ -1,16 +1,16 @@
 {
-  "version": "2026.08.28.03",
+  "version": "2026.08.28.04",
   "schedules": [
-    { "name": "daily_1400", "type": "daily", "time": "14:00" },
-    { "name": "daily_1020", "type": "daily", "time": "10:20" },
+    { "name": "news", "type": "daily", "time": "14:00" },
+    { "name": "aniversario", "type": "daily", "time": "10:30" },
     { "name": "bem_estar", "type": "daily", "time": ["10:30", "15:30"] }
   ],
   "assets": [
     { "repoPath": "images/wallpaper_fixo.jpg", "localName": "wallpaper.jpg" }
   ],
   "scripts": [
-    { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "daily_1400" },
-    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "daily_1020" },
+    { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "news" },
+    { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "aniversario" },
     { "name": "Notificacao-BemEstar.ps1", "run": true, "trigger": "bem_estar" },
     { "name": "Atualizar-Wallpaper.ps1", "run": true }
   ]
