@@ -1,12 +1,12 @@
 {
-  "version": "2026.08.31.03",
+  "version": "2026.08.31.04",
   "schedules": [
     { "name": "news", "type": "daily", "time": "14:00" },
     { "name": "aniversario", "type": "daily", "time": "10:30" },
     { "name": "bem_estar", "type": "daily", "time": ["10:30", "15:30"] }
   ],
   "assets": [
-    { "repoPath": "images/wallpaper_fixo.jpg", "localName": "wallpaper.jpg" }
+    { "repoPath": "images/setembro.jpg", "localName": "wallpaper.jpg" }
   ],
   "scripts": [
     { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "news" },
