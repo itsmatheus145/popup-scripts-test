@@ -1,5 +1,5 @@
 {
-  "version": "2026.08.31.01",
+  "version": "2026.08.31.02",
   "schedules": [
     { "name": "news", "type": "daily", "time": "14:00" },
     { "name": "aniversario", "type": "daily", "time": "10:30" },
