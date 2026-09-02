@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Launcher central - baixa manifest.json de um repositório GitHub, mantém os
     scripts e a imagem de wallpaper atualizados localmente, e garante que
@@ -31,12 +31,10 @@
 
 param(
     [string]$RunScript = "",   # se informado: executa só esse script cacheado e sai (sem sync)
-    [switch]$Bootstrap,         # marca explicitamente "isto é uma instalação inicial vinda do SYSVOL/GPO" -
+    [switch]$Bootstrap          # marca explicitamente "isto é uma instalação inicial vinda do SYSVOL/GPO" -
                                 # não depende de comparar caminhos (frágil: o BootstrapSilencioso.vbs já
                                 # copia o arquivo pra local ANTES de rodar, então $PSCommandPath nunca
                                 # reflete a origem real de forma confiável)
-    [switch]$Detached           # uso interno: marca que já é a cópia relançada como processo
-                                # independente. Evita loop infinito de relançamento.
 )
 
 # ===================== CONFIGURAÇÃO =====================
@@ -449,29 +447,6 @@ if ($RunScript) {
     }
     Invoke-CachedScript -ScriptPath $localScriptPath
     Write-Log "===== Fim da execução direta ====="
-    exit 0
-}
-
-# ============================================================
-# RELANÇAMENTO COMO PROCESSO INDEPENDENTE (evita janela visível por muito
-# tempo). Se ainda não formos a cópia já relançada, dispara um processo
-# NOVO e totalmente separado pra fazer o trabalho de verdade, e sai
-# imediatamente. Mesmo que a janela original apareça por um instante e
-# alguém feche ela, o processo filho já é independente e continua rodando
-# normalmente - não depende da janela "de fora" continuar aberta.
-# ============================================================
-if (-not $Detached.IsPresent) {
-    $argsRelancamento = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $PSCommandPath, "-Detached")
-    if ($Bootstrap.IsPresent) { $argsRelancamento += "-Bootstrap" }
-    if ($RunScript) { $argsRelancamento += @("-RunScript", $RunScript) }
-
-    try {
-        Start-Process -FilePath "powershell.exe" -ArgumentList $argsRelancamento -WindowStyle Hidden
-    } catch {
-        # Se o relançamento falhar por qualquer motivo, não trava tudo -
-        # segue rodando nesta mesma janela (comportamento antigo, com o
-        # incômodo visual, mas ainda funcional).
-    }
     exit 0
 }
 
