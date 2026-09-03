@@ -1,5 +1,5 @@
 {
-  "version": "2026.09.03.06",
+  "version": "2026.09.03.08",
   "schedules": [
     { "name": "news", "type": "daily", "time": "14:00" },
     { "name": "aniversario", "type": "daily", "time": "10:30" },
@@ -9,7 +9,7 @@
     { "repoPath": "images/setembro.jpg", "localName": "wallpaper.jpg" }
   ],
   "scripts": [
-    { "name": "Notificacao-FirstNews.ps1", "run": true, "trigger": "news" },
+    { "name": "Notificacao-FirstNews.ps1", "false": true, "trigger": "news" },
     { "name": "Notificacao-Aniversario.ps1", "run": true, "trigger": "aniversario" },
     { "name": "Notificacao-BemEstar.ps1", "run": true, "trigger": "bem_estar" },
     { "name": "Atualizar-Wallpaper.ps1", "run": true }
