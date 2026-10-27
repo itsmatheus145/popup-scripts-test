@@ -1,3 +1,5 @@
 # Computadores liberados para migrar para o repositório novo (um por linha).
 # Use * para liberar todos. Linhas com # são comentários.
 TDS
+NOTE-0794
+NOTE-1024
