@@ -1,17 +1,19 @@
 ﻿<#
 .SYNOPSIS
-    Launcher central - baixa manifest.json de um repositório GitHub, mantém os
-    scripts e a imagem de wallpaper atualizados localmente, e garante que
-    cada script tenha sua PRÓPRIA Tarefa Agendada dedicada, no horário
-    definido no manifest.
+    Launcher central - baixa manifest.json do repositório público do suporte
+    no GitHub, mantém os scripts e a imagem de wallpaper atualizados
+    localmente, e garante que cada script tenha sua PRÓPRIA Tarefa Agendada
+    dedicada, no horário definido no manifest.
 
 .DESCRIPTION
     Modelo de execução:
       - Chamado SEM -RunScript: modo "sincronização completa". Faz tudo:
         instala a cópia local (se necessário), baixa manifest/scripts/assets
-        se a versão mudou, aplica o wallpaper, e reconcilia (cria/atualiza/
-        remove) uma Tarefa Agendada dedicada para cada script do manifest.
-        É este modo que a GPO chama (via SYSVOL) e que a tarefa horária local
+        que mudaram (comparando o SHA-256 de cada arquivo com o manifest),
+        aplica o wallpaper, reconcilia (cria/atualiza/remove) uma Tarefa
+        Agendada dedicada para cada script do manifest e manda o check-in
+        diário da máquina.
+        É este modo que a GPO chama (via SYSVOL) e que a tarefa local
         "FirstDecision-LauncherSync" chama.
 
       - Chamado COM -RunScript <nome.ps1>: modo "execução direta e rápida".
@@ -20,10 +22,19 @@
         (FD-Task-<script>) usa para disparar seu próprio popup, sem
         depender de rede nem repetir toda a lógica de sincronização.
 
-    "Auto-cura": toda vez que a máquina se conecta à GPO (ou a tarefa local
-    horária dispara), a reconciliação roda de novo - qualquer tarefa apagada
-    manualmente é recriada, qualquer mudança de horário no manifest é
-    aplicada, e qualquer script removido do manifest tem sua tarefa apagada.
+    Sem token: o repositório é público e não guarda nenhum segredo. Os
+    arquivos são baixados de raw.githubusercontent.com (CDN, sem o limite
+    de 60 chamadas/hora da API para quem não tem token - importante porque
+    no escritório todas as máquinas saem pelo mesmo IP).
+
+    Integridade: o manifest traz o SHA-256 de cada arquivo (inclusive deste
+    launcher). Arquivo baixado com hash diferente é descartado e o cache
+    anterior é mantido - nunca grava um arquivo pela metade ou adulterado.
+
+    "Auto-cura": toda sincronização reconcilia de novo - tarefa apagada à
+    mão é recriada, horário mudado no manifest é aplicado, script removido
+    ou com run=false tem sua tarefa apagada, e arquivo local alterado volta
+    a ser o do manifest.
 
 .NOTES
     Autor: Matheus Itacaramby Souza - First Decision
@@ -38,21 +49,24 @@ param(
 )
 
 # ===================== CONFIGURAÇÃO =====================
-$RepoOwner   = "itsmatheus145"
-$RepoName    = "popup-scripts-test"
+$RepoOwner   = "firstdecisionltda"   # conta do suporte no GitHub (suporte@firstdecision.com.br)
+$RepoName    = "popups-fd"
 $Branch      = "main"
-
-# O token NÃO fica mais escrito aqui dentro - esse arquivo agora pode ir pro
-# Git sem risco (é código puro, sem segredo). O token vive num arquivo à
-# parte, que só existe no SYSVOL e é copiado pra máquina uma vez (assim como
-# este script) - nunca é versionado, nunca aparece num commit.
-$TokenFilePath = Join-Path "C:\ProgramData\FirstDecision\Launcher" "github_token.dat"
+# Repositório PÚBLICO e sem segredos: as máquinas leem direto, sem token. O
+# raw.githubusercontent.com não tem o limite de 60 chamadas/hora por IP da API
+# (importante: no escritório todas as máquinas saem pelo mesmo IP). Em troca,
+# guarda cópias por ~5 min, então uma mudança pode levar esse tempo a valer;
+# o hash do manifest garante que nunca se grava arquivo "meio velho".
+$RawBase     = "https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch"
 
 $CacheDir       = "C:\ProgramData\FirstDecision\PopupScripts"
 $AssetsDir      = Join-Path $CacheDir "Assets"
 $LogDir         = Join-Path $CacheDir "Logs"
 $VersionFile    = Join-Path $CacheDir "current_version.txt"
-$ApiBase        = "https://api.github.com/repos/$RepoOwner/$RepoName/contents"
+# Cópia local do manifest - os scripts leem dela as URLs de config (ex: fluxo
+# de aniversários), assim dá pra trocar uma URL sem mexer em script nenhum.
+$ManifestLocal  = Join-Path $CacheDir "manifest.json"
+$CheckinFile    = Join-Path $CacheDir "ultimo_checkin.txt"
 
 # Caminho local fixo do launcher. Depois da primeira execução via GPO/SYSVOL,
 # todas as tarefas locais apontam pra cá - nunca mais precisam do domínio.
@@ -60,11 +74,11 @@ $LauncherLocalDir  = "C:\ProgramData\FirstDecision\Launcher"
 $LauncherLocalPath = Join-Path $LauncherLocalDir "Update-PopupScripts.ps1"
 
 # Nome do script de wallpaper - tratado à parte dos demais (não tem tarefa
-# dedicada própria; é baixado e aplicado a cada sincronização, porque deve
-# refletir qualquer imagem nova o quanto antes).
+# dedicada própria; é aplicado a cada sincronização, porque deve refletir
+# qualquer imagem nova o quanto antes).
 $WallpaperScriptName = "Atualizar-Wallpaper.ps1"
 
-# Intervalo (em horas) da tarefa local recorrente de sincronização completa.
+# Intervalo (em minutos) da tarefa local recorrente de sincronização completa.
 $IntervaloMinutosSincronizacao = 20
 
 # Atraso (em segundos) só quando esta execução partiu de um caminho remoto
@@ -73,34 +87,10 @@ $DelayPosConexaoSegundos = 60
 
 # Nome do arquivo do próprio launcher dentro do repositório (raiz, separado
 # da pasta scripts/ que é só para os scripts "de carga" tipo popups).
-# Usado para o launcher se auto-atualizar via GitHub, sem depender de nunca
-# mais tocar no domínio/SYSVOL. Este arquivo em si NÃO carrega o token -
-# só código.
-# mais tocar no domínio/SYSVOL.
 $LauncherRepoPath = "Update-PopupScripts.ps1"
-
-# Caminho fixo da pasta de scripts no SYSVOL - usado só pra localizar o
-# github_token.dat na primeira instalação. Fixo (não derivado de
-# $PSCommandPath) porque a cadeia via BootstrapSilencioso.vbs já roda a
-# partir do caminho LOCAL, então $PSCommandPath nunca reflete o SYSVOL de
-# forma confiável nessa cadeia.
-$SysvolScriptsPath = "\\firstdecision.local\SYSVOL\firstdecision.local\scripts"
 
 $TaskPrefixDedicada = "FD-Task-"
 # ==========================================================
-
-function Get-GitHubToken {
-    if (-not (Test-Path $TokenFilePath)) {
-        Write-Log "Arquivo de token não encontrado em $TokenFilePath. Sincronização com o GitHub vai falhar até isso ser corrigido." "ERROR"
-        return $null
-    }
-    try {
-        return (Get-Content -Path $TokenFilePath -Raw).Trim()
-    } catch {
-        Write-Log "Falha ao ler o arquivo de token: $($_.Exception.Message)" "ERROR"
-        return $null
-    }
-}
 
 function Write-Log {
     param([string]$Message, [string]$Level = "INFO")
@@ -109,7 +99,7 @@ function Write-Log {
         # Mesma proteção já aplicada ao diretório do Launcher: garante que
         # usuários comuns sempre consigam escrever aqui, mesmo que esta
         # criação específica tenha acontecido numa sessão elevada.
-        try { & icacls.exe $LogDir /grant "Usuários:(OI)(CI)M" /T *> $null } catch { }
+        try { & icacls.exe $LogDir /grant "*S-1-5-32-545:(OI)(CI)M" /T *> $null } catch { }
     }
     $logFile = Join-Path $LogDir ("execucao_{0}.log" -f (Get-Date -Format "yyyy-MM-dd"))
     $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
@@ -120,70 +110,112 @@ function Write-Log {
         # sessão elevada, com ACL restrita), tenta liberar a permissão e
         # escrever de novo, uma vez, antes de desistir silenciosamente.
         try {
-            & icacls.exe $logFile /grant "Usuários:M" *> $null
+            & icacls.exe $logFile /grant "*S-1-5-32-545:M" *> $null
             Add-Content -Path $logFile -Value $line -ErrorAction Stop
         } catch { }
     }
     Write-Host $line
 }
 
-function Get-GitHubFileBytes {
-    param([string]$RepoPath, [hashtable]$Headers)
+function Get-Sha256 {
+    param([byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $segmentosCodificados = $RepoPath -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }
-        $repoPathCodificado = $segmentosCodificados -join '/'
-        $url = "$ApiBase/${repoPathCodificado}?ref=$Branch"
-        $resp = Invoke-RestMethod -Uri $url -Headers $Headers -TimeoutSec 15
-        return [System.Convert]::FromBase64String($resp.content)
+        return ([System.BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace("-", "")
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-LocalFileSha256 {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return "" }
+    try {
+        return Get-Sha256 -Bytes ([System.IO.File]::ReadAllBytes($Path))
+    } catch {
+        return ""
+    }
+}
+
+function Get-RemoteFileBytes {
+    param([string]$RepoPath, [string]$CacheBuster = "")
+    # WebClient.DownloadData devolve os bytes exatos (Invoke-WebRequest no
+    # PowerShell 5.1 converte texto e pode mexer em BOM/encoding, o que
+    # quebraria a comparação de hash).
+    $segmentosCodificados = $RepoPath -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }
+    $url = "$RawBase/$($segmentosCodificados -join '/')"
+    # Um parâmetro que muda junto com o conteúdo (o hash esperado, ou o horário
+    # no caso do manifest) ajuda a não pegar cópia velha do CDN.
+    if ($CacheBuster) { $url = "${url}?v=$CacheBuster" }
+    $wc = New-Object System.Net.WebClient
+    try {
+        $wc.Headers.Add("User-Agent", "FirstDecision-PopupLauncher")
+        return $wc.DownloadData($url)
     } catch {
         Write-Log "Falha ao baixar $RepoPath : $($_.Exception.Message)" "ERROR"
         return $null
+    } finally {
+        $wc.Dispose()
     }
 }
 
-function Get-GitHubFileContent {
-    param([string]$RepoPath, [hashtable]$Headers)
-    $bytes = Get-GitHubFileBytes -RepoPath $RepoPath -Headers $Headers
-    if (-not $bytes) { return $null }
-    $bom = [System.Text.Encoding]::UTF8.GetPreamble()
-    if ($bytes.Length -ge $bom.Length -and (Compare-Object $bytes[0..($bom.Length-1)] $bom -SyncWindow 0) -eq $null) {
-        $bytes = $bytes[$bom.Length..($bytes.Length-1)]
+function Save-VerifiedFile {
+    # Baixa um arquivo do repo e só grava se o SHA-256 bater com o manifest.
+    # Retorna $true se o arquivo local ficou igual ao do manifest.
+    param([string]$RepoPath, [string]$LocalPath, [string]$ExpectedSha256)
+
+    $expected = "$ExpectedSha256".ToUpper()
+    if ($expected -and ((Get-LocalFileSha256 -Path $LocalPath) -eq $expected)) {
+        return $true   # já está igual - nada a baixar
     }
-    return [System.Text.Encoding]::UTF8.GetString($bytes)
+
+    $bytes = Get-RemoteFileBytes -RepoPath $RepoPath -CacheBuster $expected
+    if (-not $bytes) {
+        Write-Log "Mantendo a versão em cache de $RepoPath (se existir)." "WARN"
+        return $false
+    }
+
+    if ($expected) {
+        $hashRecebido = Get-Sha256 -Bytes $bytes
+        if ($hashRecebido -ne $expected) {
+            Write-Log "Hash de $RepoPath não confere (esperado $expected, recebido $hashRecebido). Arquivo descartado; mantendo cache. Se acabou de publicar, o CDN pode estar atrasado - tenta de novo na próxima sincronização." "ERROR"
+            return $false
+        }
+    }
+
+    try {
+        [System.IO.File]::WriteAllBytes($LocalPath, $bytes)
+        Write-Log "$RepoPath atualizado -> $LocalPath"
+        return $true
+    } catch {
+        Write-Log "Falha ao gravar $LocalPath : $($_.Exception.Message)" "ERROR"
+        return $false
+    }
 }
 
 function Update-LauncherFromGitHub {
-    param([hashtable]$Headers)
+    param($Manifest)
 
-    # Compara o conteúdo do launcher no GitHub com a cópia local (por hash,
-    # não por número de versão - qualquer mudança de conteúdo já dispara a
-    # atualização). Isso garante que máquinas que nunca mais voltam a tocar
-    # no domínio/SYSVOL ainda recebem correções futuras no próprio launcher,
-    # não só nos scripts que ele gerencia.
-    $remoteBytes = Get-GitHubFileBytes -RepoPath $LauncherRepoPath -Headers $Headers
-    if (-not $remoteBytes) {
-        Write-Log "Não foi possível verificar atualização do próprio launcher (falha ao baixar). Mantendo versão atual." "WARN"
-        return
-    }
-
+    # Compara o hash do launcher local com o informado no manifest. Garante
+    # que máquinas que nunca mais voltam a tocar no domínio/SYSVOL recebem
+    # correções no próprio launcher, não só nos scripts que ele gerencia.
     if (-not (Test-Path $LauncherLocalPath)) {
         return  # Install-LocalLauncher ainda não rodou nesta execução - nada a comparar
     }
 
-    $localBytes = [System.IO.File]::ReadAllBytes($LauncherLocalPath)
-    $hashRemoto = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($remoteBytes))
-    $hashLocal  = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($localBytes))
-
-    if ($hashRemoto -eq $hashLocal) {
-        Write-Log "Launcher já está na versão mais recente (hash confere com o GitHub)."
+    $hashEsperado = "$($Manifest.launcher.sha256)".ToUpper()
+    if (-not $hashEsperado) {
+        Write-Log "Manifest sem launcher.sha256 - atualização do próprio launcher pulada." "WARN"
         return
     }
 
-    try {
-        [System.IO.File]::WriteAllBytes($LauncherLocalPath, $remoteBytes)
-        Write-Log "Launcher atualizado via GitHub (o código do próprio Update-PopupScripts.ps1 mudou). A versão nova entra em vigor na próxima execução agendada."
-    } catch {
-        Write-Log "Falha ao gravar a nova versão do launcher: $($_.Exception.Message)" "ERROR"
+    if ((Get-LocalFileSha256 -Path $LauncherLocalPath) -eq $hashEsperado) {
+        Write-Log "Launcher já está na versão mais recente (hash confere com o manifest)."
+        return
+    }
+
+    if (Save-VerifiedFile -RepoPath $LauncherRepoPath -LocalPath $LauncherLocalPath -ExpectedSha256 $hashEsperado) {
+        Write-Log "Launcher atualizado (o código do próprio Update-PopupScripts.ps1 mudou). A versão nova entra em vigor na próxima execução agendada."
     }
 }
 
@@ -264,35 +296,24 @@ function Install-LocalLauncher {
         if (-not (Test-Path $LauncherLocalDir)) {
             New-Item -Path $LauncherLocalDir -ItemType Directory -Force | Out-Null
         }
-        Copy-Item -Path $PSCommandPath -Destination $LauncherLocalPath -Force
+        if ($PSCommandPath -ne $LauncherLocalPath) {
+            Copy-Item -Path $PSCommandPath -Destination $LauncherLocalPath -Force
+        }
 
         # Reforço: garante que usuários comuns sempre consigam escrever nessa
         # pasta, mesmo que esta execução específica tenha rodado elevada (o
         # que normalmente restringiria a ACL só a Administradores). Sem isso,
         # a próxima sincronização não-elevada falha com "Acesso negado".
+        # Usa o SID do grupo Usuários (S-1-5-32-545) em vez do nome, que muda
+        # conforme o idioma do Windows ("Users" em inglês).
         try {
-            & icacls.exe $LauncherLocalDir /grant "Usuários:(OI)(CI)M" /T *> $null
+            & icacls.exe $LauncherLocalDir /grant "*S-1-5-32-545:(OI)(CI)M" /T *> $null
         } catch { }
 
         Write-Log "Launcher copiado/atualizado em $LauncherLocalPath."
     } catch {
         Write-Log "Falha ao copiar o launcher para local: $($_.Exception.Message)" "ERROR"
         return $true
-    }
-
-    # Copia o arquivo de token (vive como "arquivo irmão" do script no SYSVOL,
-    # NUNCA no Git) para o local fixo - mesma lógica do próprio script: só
-    # precisa existir uma vez, na primeira conexão com o domínio.
-    try {
-        $tokenSourcePath = Join-Path $SysvolScriptsPath "github_token.dat"
-        if (Test-Path $tokenSourcePath) {
-            Copy-Item -Path $tokenSourcePath -Destination $TokenFilePath -Force
-            Write-Log "Arquivo de token copiado/atualizado a partir do SYSVOL."
-        } else {
-            Write-Log "Arquivo 'github_token.dat' não encontrado ao lado do launcher no SYSVOL ($tokenSourcePath). Verifique se ele foi publicado." "ERROR"
-        }
-    } catch {
-        Write-Log "Falha ao copiar o arquivo de token: $($_.Exception.Message)" "ERROR"
     }
 
     # Tarefa local de sincronização periódica (contexto usuário, sem GPO)
@@ -318,8 +339,6 @@ function Install-LocalLauncher {
     # do Windows ("O nome da rede especificado não está mais disponível"),
     # porque o wscript.exe nem consegue ABRIR o arquivo pela rede - isso
     # acontece ANTES de qualquer lógica interna de tolerância a falha rodar.
-    # Como esta tarefa é de propriedade do próprio usuário (não SYSTEM/GPO
-    # admin), consegue ser reescrita sem precisar de privilégio elevado.
     $taskNameLogonGpo = "FirstDecision - Launcher Popup Central"
     try {
         if (Get-ScheduledTask -TaskName $taskNameLogonGpo -ErrorAction SilentlyContinue) {
@@ -337,10 +356,7 @@ function Install-LocalLauncher {
 function Remove-TarefasObsoletas {
     # Roda em TODA sincronização (não só no bootstrap) - garante que tarefas
     # antigas/aposentadas sejam removidas mesmo em máquinas que nunca mais
-    # voltam a tocar no domínio. Se uma GPO antiga ainda estiver ativa e
-    # recriando alguma dessas tarefas, elas voltam a ser removidas na
-    # próxima sincronização (a cada 1h) - só "vencem" de vez quando a GPO
-    # de origem for desativada/desvinculada.
+    # voltam a tocar no domínio.
     $nomesObsoletos = @(
         "FirstDecision-LauncherLocal-Logon", "FirstDecision-LauncherLocal-Periodico", "FirstDecision-LauncherLocal",
         "TASK POPUP - FD"   # sistema antigo de popup de bem-estar (GPO "POP_UP", substituído por Notificacao-BemEstar.ps1)
@@ -375,7 +391,7 @@ function Sync-DedicatedScriptTasks {
     # schedule existente, e não serem o script de wallpaper (que é tratado à parte).
     $desired = @{}
     foreach ($item in $Manifest.scripts) {
-        if (-not $item.run) { continue }
+        if ($item.run -ne $true) { continue }
         if ($item.name -eq $WallpaperScriptName) { continue }
 
         $sched = $schedulesByName[$item.trigger]
@@ -450,6 +466,51 @@ function Sync-DedicatedScriptTasks {
     }
 }
 
+function Send-CheckIn {
+    # Uma vez por dia por máquina/usuário, avisa o fluxo de check-in (Power
+    # Automate) que esta máquina está com o sistema de popups funcionando.
+    # Serve só pra TI saber quem tem e quem falta. Falha aqui nunca
+    # interrompe o resto da sincronização.
+    param($Manifest)
+
+    $url = $Manifest.config.checkinUrl
+    if (-not $url) { return }
+
+    $hoje = Get-Date -Format "yyyy-MM-dd"
+    $marca = "$hoje|$($env:USERNAME)"
+    if ((Test-Path $CheckinFile) -and ((Get-Content -Path $CheckinFile -Raw -ErrorAction SilentlyContinue) -match [regex]::Escape($marca))) {
+        return   # já fez check-in hoje com este usuário
+    }
+
+    # Patrimônio = nome do computador sem o prefixo "NOTE" (ex: NOTE-1100 -> 1100).
+    # Fora desse padrão, manda o nome inteiro pra não perder a linha.
+    $computador = $env:COMPUTERNAME
+    $patrimonio = if ($computador -match '^NOTE[-_ ]?(.+)$') { $Matches[1] } else { $computador }
+
+    $upn = ""
+    try { $upn = (& whoami.exe /upn 2>$null | Out-String).Trim() } catch { }
+
+    $corpo = [ordered]@{
+        computador      = $computador
+        patrimonio      = $patrimonio
+        usuario         = $env:USERNAME
+        upn             = $upn
+        versaoManifest  = "$($Manifest.version)"
+        versaoLauncher  = (Get-LocalFileSha256 -Path $LauncherLocalPath).Substring(0, [Math]::Min(12, (Get-LocalFileSha256 -Path $LauncherLocalPath).Length))
+        wallpaper       = (Get-LocalFileSha256 -Path (Join-Path $AssetsDir "wallpaper.jpg"))
+        windows         = [System.Environment]::OSVersion.Version.ToString()
+        dataHora        = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")
+    } | ConvertTo-Json -Compress
+
+    try {
+        Invoke-RestMethod -Uri $url -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($corpo)) -ContentType "application/json; charset=utf-8" -TimeoutSec 30 | Out-Null
+        Set-Content -Path $CheckinFile -Value $marca -Encoding UTF8
+        Write-Log "Check-in diário enviado ($computador / $($env:USERNAME))."
+    } catch {
+        Write-Log "Falha ao enviar o check-in diário: $($_.Exception.Message)" "WARN"
+    }
+}
+
 # ============================================================
 # MODO RÁPIDO: -RunScript informado -> só executa e sai, sem tocar em rede.
 # ============================================================
@@ -467,10 +528,52 @@ if ($RunScript) {
 
 # ============================================================
 # MODO COMPLETO: instala local (se preciso), sincroniza manifest/scripts/
-# assets, aplica wallpaper, reconcilia tarefas dedicadas.
+# assets, aplica wallpaper, reconcilia tarefas dedicadas, faz check-in.
 # ============================================================
 Write-Log "===== Início da sincronização completa ====="
 
+# raw.githubusercontent.com exige TLS 1.2; o PowerShell 5.1 nem sempre usa
+# por padrão em Windows mais antigos.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+# ===================== PONTE: ANEL DE MIGRAÇÃO =====================
+# O repositório antigo tem o arquivo ponte-anel.txt com os nomes dos
+# computadores liberados para migrar ("*" = todos). Quem não está na lista
+# continua exatamente como antes: não sincroniza com o repositório novo, não
+# mexe em tarefas e só mantém a própria ponte atualizada pelo repositório
+# antigo. Se o arquivo não puder ser lido, ninguém migra.
+$OldRawBase = "https://raw.githubusercontent.com/itsmatheus145/popup-scripts-test/main"
+function Get-OldRepoBytes {
+    param([string]$Path)
+    $wc = New-Object System.Net.WebClient
+    try {
+        $wc.Headers.Add("User-Agent", "FirstDecision-PopupLauncher")
+        return $wc.DownloadData("$OldRawBase/${Path}?v=$(Get-Date -Format 'yyyyMMddHHmmss')")
+    } catch {
+        return $null
+    } finally { $wc.Dispose() }
+}
+function Test-AnelMigracao {
+    $b = Get-OldRepoBytes "ponte-anel.txt"
+    if (-not $b) { return $false }
+    $linhas = [System.Text.Encoding]::UTF8.GetString($b).TrimStart([char]0xFEFF) -split "`r?`n" |
+        ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith("#") }
+    return (($linhas -contains "*") -or ($linhas -contains $env:COMPUTERNAME))
+}
+if (-not (Test-AnelMigracao)) {
+    Write-Log "Ponte: computador fora do anel de migração - nada a fazer nesta execução."
+    $remoto = Get-OldRepoBytes "Update-PopupScripts.ps1"
+    if ($remoto -and ((Get-Sha256 -Bytes $remoto) -ne (Get-LocalFileSha256 -Path $LauncherLocalPath))) {
+        try {
+            [System.IO.File]::WriteAllBytes($LauncherLocalPath, $remoto)
+            Write-Log "Ponte: atualizada a partir do repositório antigo."
+        } catch {
+            Write-Log "Ponte: não foi possível atualizar: $($_.Exception.Message)" "WARN"
+        }
+    }
+    Write-Log "===== Fim da sincronização (fora do anel) ====="
+    exit 0
+}
 $vbsPath = Install-RunHiddenWrapper
 $vieioDeRemoto = Install-LocalLauncher -VbsPath $vbsPath -ForcarBootstrap $Bootstrap.IsPresent
 
@@ -484,83 +587,61 @@ if ($vieioDeRemoto -and $DelayPosConexaoSegundos -gt 0) {
 if (-not (Test-Path $CacheDir)) { New-Item -Path $CacheDir -ItemType Directory -Force | Out-Null }
 if (-not (Test-Path $AssetsDir)) { New-Item -Path $AssetsDir -ItemType Directory -Force | Out-Null }
 
-$headers = @{
-    "User-Agent" = "FirstDecision-PopupLauncher"
-    "Accept"     = "application/vnd.github.v3+json"
-}
-$GitHubToken = Get-GitHubToken
-if (-not $GitHubToken) {
-    Write-Log "Sem token disponível - abortando sincronização." "ERROR"
+# Manifest sempre fresco: cache-buster pelo horário, pra ligar/desligar um
+# popup ou mudar horário valer na próxima sincronização, sem esperar o CDN.
+$manifestBytes = Get-RemoteFileBytes -RepoPath "manifest.json" -CacheBuster (Get-Date -Format "yyyyMMddHHmmss")
+if (-not $manifestBytes) {
+    Write-Log "Não foi possível obter o manifest remoto. Abortando execução (cache e tarefas atuais continuam valendo)." "ERROR"
     exit 1
 }
-$headers["Authorization"] = "token $GitHubToken"
 
-Update-LauncherFromGitHub -Headers $headers
-
-$manifestRaw = Get-GitHubFileContent -RepoPath "manifest.json" -Headers $headers
-if (-not $manifestRaw) {
-    Write-Log "Não foi possível obter o manifest remoto. Abortando execução." "ERROR"
-    exit 1
+$bom = [System.Text.Encoding]::UTF8.GetPreamble()
+if ($manifestBytes.Length -ge 3 -and $manifestBytes[0] -eq $bom[0] -and $manifestBytes[1] -eq $bom[1] -and $manifestBytes[2] -eq $bom[2]) {
+    $manifestBytes = $manifestBytes[3..($manifestBytes.Length - 1)]
 }
+$manifestRaw = [System.Text.Encoding]::UTF8.GetString($manifestBytes)
 
 try {
     $manifest = $manifestRaw | ConvertFrom-Json
 } catch {
-    Write-Log "Manifest inválido (JSON malformado). Abortando." "ERROR"
+    Write-Log "Manifest inválido (JSON malformado). Abortando (cache e tarefas atuais continuam valendo)." "ERROR"
     exit 1
 }
 
 Write-Log "Versão do manifest remoto: $($manifest.version)"
 
-$localVersion = if (Test-Path $VersionFile) { (Get-Content $VersionFile -Raw).Trim() } else { "" }
-$versaoMudou = ($localVersion -ne $manifest.version.Trim())
-
-if (-not $versaoMudou) {
-    Write-Log "Versão local já está atualizada ($($manifest.version)). Usando cache para scripts/assets."
-} else {
-    Write-Log "Nova versão detectada (local: '$localVersion' -> remoto: '$($manifest.version)'). Baixando scripts e assets..."
-
-    foreach ($item in $manifest.scripts) {
-        if (-not $item.run) {
-            Write-Log "Script $($item.name) marcado como run=false. Pulando download."
-            continue
-        }
-        Write-Log "Baixando $($item.name)..."
-        $rawBytes = Get-GitHubFileBytes -RepoPath "scripts/$($item.name)" -Headers $headers
-        if (-not $rawBytes) {
-            Write-Log "Falha ao baixar $($item.name). Mantendo versão em cache anterior (se existir)." "ERROR"
-            continue
-        }
-        $localScriptPath = Join-Path $CacheDir $item.name
-        [System.IO.File]::WriteAllBytes($localScriptPath, $rawBytes)
-        Write-Log "$($item.name) baixado com sucesso."
-    }
-
-    foreach ($asset in $manifest.assets) {
-        Write-Log "Baixando asset $($asset.repoPath)..."
-        $rawBytes = Get-GitHubFileBytes -RepoPath $asset.repoPath -Headers $headers
-        if (-not $rawBytes) {
-            Write-Log "Falha ao baixar asset $($asset.repoPath). Mantendo versão em cache anterior (se existir)." "ERROR"
-            continue
-        }
-        $localAssetPath = Join-Path $AssetsDir $asset.localName
-        [System.IO.File]::WriteAllBytes($localAssetPath, $rawBytes)
-        Write-Log "Asset $($asset.repoPath) baixado com sucesso -> $localAssetPath"
-    }
-
-    Set-Content -Path $VersionFile -Value $manifest.version -Encoding UTF8
+try {
+    [System.IO.File]::WriteAllText($ManifestLocal, $manifestRaw, (New-Object System.Text.UTF8Encoding($false)))
+} catch {
+    Write-Log "Falha ao salvar a cópia local do manifest: $($_.Exception.Message)" "WARN"
 }
 
-# Baixa o script de wallpaper sempre (independente de mudança de versão, é
-# leve e garante que ele exista mesmo em cenários de recuperação)
-$wallpaperScriptPath = Join-Path $CacheDir $WallpaperScriptName
-$rawWallpaperScript = Get-GitHubFileBytes -RepoPath "scripts/$WallpaperScriptName" -Headers $headers
-if ($rawWallpaperScript) {
-    [System.IO.File]::WriteAllBytes($wallpaperScriptPath, $rawWallpaperScript)
+Update-LauncherFromGitHub -Manifest $manifest
+
+# Scripts: baixa só os que mudaram (hash local diferente do manifest). Os
+# com run=false não são baixados, mas a cópia em cache não é apagada - ao
+# religar, volta a valer na hora.
+$tudoOk = $true
+foreach ($item in $manifest.scripts) {
+    if ($item.run -ne $true) { continue }
+    $ok = Save-VerifiedFile -RepoPath "scripts/$($item.name)" -LocalPath (Join-Path $CacheDir $item.name) -ExpectedSha256 $item.sha256
+    if (-not $ok) { $tudoOk = $false }
+}
+
+foreach ($asset in $manifest.assets) {
+    $ok = Save-VerifiedFile -RepoPath $asset.repoPath -LocalPath (Join-Path $AssetsDir $asset.localName) -ExpectedSha256 $asset.sha256
+    if (-not $ok) { $tudoOk = $false }
+}
+
+if ($tudoOk) {
+    Set-Content -Path $VersionFile -Value $manifest.version -Encoding UTF8
+} else {
+    Write-Log "Algum arquivo não pôde ser atualizado nesta sincronização - tenta de novo na próxima." "WARN"
 }
 
 # Aplica o wallpaper agora (contexto usuário desta execução) - garante que
 # qualquer imagem nova baixada acima já reflita na área de trabalho.
+$wallpaperScriptPath = Join-Path $CacheDir $WallpaperScriptName
 if (Test-Path $wallpaperScriptPath) {
     Invoke-CachedScript -ScriptPath $wallpaperScriptPath
 } else {
@@ -570,7 +651,9 @@ if (Test-Path $wallpaperScriptPath) {
 # Reconcilia as tarefas dedicadas (uma por script agendado) com o manifest -
 # roda SEMPRE, mudando ou não a versão, garantindo "auto-cura" a cada
 # sincronização (tarefa apagada na mão volta, horário mudado é corrigido,
-# script removido do manifest tem sua tarefa apagada).
+# script desligado ou removido do manifest tem sua tarefa apagada).
 Sync-DedicatedScriptTasks -Manifest $manifest -VbsPath $vbsPath
+
+Send-CheckIn -Manifest $manifest
 
 Write-Log "===== Fim da sincronização completa ====="
